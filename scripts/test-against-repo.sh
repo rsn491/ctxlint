@@ -137,7 +137,16 @@ echo "==> Building ctxlint"
 (cd "$ROOT_DIR" && cargo build --release)
 
 echo "==> Running ctxlint against $CLONE_DIR"
-"$ROOT_DIR/target/release/ctxlint" "$@" "$CLONE_DIR"
+# The clone lives under ctxlint's own repository, so config discovery would
+# find ctxlint's .ctxlint.yaml and quietly apply its settings to somebody
+# else's repo. Ignore it, unless the caller asked for a config themselves.
+CONFIG_ARGS=(--no-config)
+for arg in "$@"; do
+  case "$arg" in
+    --config | --config=* | --no-config) CONFIG_ARGS=() ;;
+  esac
+done
+"$ROOT_DIR/target/release/ctxlint" ${CONFIG_ARGS[@]+"${CONFIG_ARGS[@]}"} "$@" "$CLONE_DIR"
 STATUS=$?
 
 echo "==> ctxlint exited with status $STATUS"

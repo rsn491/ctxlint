@@ -1,0 +1,7 @@
+# ctxlint's settings for its own repository. Flags override anything set here.
+strict: true
+
+exclude:
+  # Fixtures are broken on purpose.
+  - testdata
+  - tmp

@@ -257,7 +257,9 @@ pub fn split(src: &[u8]) -> (Frontmatter, String, Option<Error>) {
     (fm, body, None)
 }
 
-fn scalar_string<'a>(data: &YamlData<'a, MarkedYaml<'a>>) -> Option<String> {
+/// Renders a scalar YAML node as a string. Shared with the config loader,
+/// which reads the same flavor of YAML.
+pub fn scalar_string<'a>(data: &YamlData<'a, MarkedYaml<'a>>) -> Option<String> {
     match data {
         YamlData::Value(scalar) => Some(stringify_scalar(scalar)),
         YamlData::Representation(cow, ..) => Some(cow.to_string()),

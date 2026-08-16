@@ -145,11 +145,12 @@ fn matches_any(patterns: &[Pattern], name: &str, rel: &str) -> bool {
 }
 
 /// Rejects malformed patterns up front rather than silently matching nothing
-/// on every path.
+/// on every path. The message names no flag because an exclude can come from
+/// `--exclude` or from the config file's `exclude:`.
 fn compile_globs(globs: &[String]) -> Result<Vec<Pattern>, String> {
     globs
         .iter()
-        .map(|g| Pattern::new(g).map_err(|e| format!("invalid --exclude pattern {g:?}: {e}")))
+        .map(|g| Pattern::new(g).map_err(|e| format!("invalid exclude pattern {g:?}: {e}")))
         .collect()
 }
 
@@ -330,7 +331,7 @@ mod tests {
             &["[".to_string()],
         )
         .unwrap_err();
-        assert!(err.contains("invalid --exclude"), "{err}");
+        assert!(err.contains("invalid exclude"), "{err}");
     }
 
     #[test]

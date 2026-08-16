@@ -2,6 +2,7 @@
 //! front-matter correctness and token budget overruns.
 
 mod cli;
+mod config;
 mod discover;
 mod lint;
 mod parse;

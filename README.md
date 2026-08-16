@@ -48,6 +48,69 @@ ctxlint --strict --format json .
 | `--max-skill-tokens` | `5000` | Body token budget for `SKILL.md` |
 | `--max-skill-name-tokens` | `16` | Budget for a skill's `name` |
 | `--max-skill-description-tokens` | `100` | Budget for a skill's `description` |
+| `--exclude` | | Glob of paths to skip; repeatable |
+| `--disable` | | Rule id to skip; repeatable |
+| `--strict` | `false` | Treat warnings as errors |
+| `--quiet` | `false` | Report errors only |
+| `--format` | `text` | `text` or `json` |
+| `--color` | `auto` | `auto`, `always`, or `never` |
+| `--config` | | Read settings from this file instead of searching |
+| `--no-config` | `false` | Ignore any config file |
+
+## Configuration file
+
+Rather than repeating flags on every run, put a repository's settings in
+`.ctxlint.yaml` (or `.ctxlint.yml`). ctxlint reads the nearest one at or above
+the working directory, so it applies whether you run from the repository root
+or from a subdirectory.
+
+```yaml
+# Token budgets. 0 disables the check.
+max-agents-tokens: 2500
+max-skill-tokens: 3000
+max-skill-name-tokens: 16
+max-skill-description-tokens: 100
+
+# Paths to skip, as globs.
+exclude:
+  - testdata
+  - "examples/**"
+
+# Rules, by id. false switches one off.
+rules:
+  name.dir-mismatch: false
+  frontmatter.unknown-key: false
+
+# Run behavior, matching the flags of the same name.
+strict: true
+quiet: false
+format: text
+color: auto
+```
+
+Every key mirrors the flag of the same name without its leading dashes, plus
+the `rules` mapping, which is the file form of `--disable`. Booleans also
+accept `yes`/`no` and `on`/`off`, and `exclude` accepts a lone string as well
+as a list.
+
+Flags win over the file, and the file wins over the defaults:
+
+```sh
+# use the project's settings, but with a tighter skill budget just this once
+ctxlint --max-skill-tokens 2000 .
+
+# read a specific file, wherever it lives
+ctxlint --config ci/ctxlint.yaml .
+
+# ignore the project's settings entirely
+ctxlint --no-config .
+```
+
+`--exclude` and `--disable` are the exception: they add to what the file
+already lists instead of replacing it.
+
+Unknown settings, unknown rule ids, and values of the wrong type are reported
+with the file and line that caused them, and exit 2 rather than being ignored.
 
 ### Rules
 
@@ -71,7 +134,7 @@ ctxlint --strict --format json .
 | `tokens.description` | error | `description` within its token budget |
 | `file-reference.missing` | error | Every relative markdown link, and every `./`- or `../`-prefixed file path in inline code, resolves to a file that exists |
 
-Switch any of them off by id:
+Switch any of them off by id, on the command line or in the config file:
 ```sh
 ctxlint --disable name.dir-mismatch --disable frontmatter.unknown-key .
 ```
@@ -84,6 +147,9 @@ ctxlint --disable name.dir-mismatch --disable frontmatter.unknown-key .
     cargo install --path .
     ctxlint --strict .
 ```
+
+With a `.ctxlint.yaml` checked in, the flags can drop out of the workflow
+entirely and CI lints with exactly the settings contributors get locally.
 
 ## Development
 

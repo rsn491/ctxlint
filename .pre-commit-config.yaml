@@ -31,7 +31,8 @@ repos:
 
       - id: ctxlint-self
         name: ctxlint (self-lint)
-        entry: cargo run --quiet --bin ctxlint -- --strict --exclude testdata --exclude tmp .
+        # Settings come from the repository's .ctxlint.yaml.
+        entry: cargo run --quiet --bin ctxlint -- .
         language: system
         always_run: true
         pass_filenames: false
