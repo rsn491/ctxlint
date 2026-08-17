@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use glob::Pattern;
 
@@ -28,6 +28,10 @@ impl std::fmt::Display for Kind {
 pub struct Target {
     pub path: String,
     pub kind: Kind,
+    /// The tree this target was found under: the directory argument that
+    /// produced it, or the file's own directory when named explicitly. Rules
+    /// use it to tell a reference into the linted tree from one that escapes.
+    pub root: PathBuf,
 }
 
 /// Never walked: holds dependencies and build output, whose instruction files
@@ -66,12 +70,13 @@ pub fn find(paths: &[String], excludes: &[String]) -> Result<Vec<Target>, String
 
     let mut seen = HashSet::new();
     let mut targets = Vec::new();
-    let mut add = |path: &Path, kind: Kind| {
+    let mut add = |path: &Path, kind: Kind, root: &Path| {
         let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         if seen.insert(abs) {
             targets.push(Target {
                 path: to_slash(path),
                 kind,
+                root: root.to_path_buf(),
             });
         }
     };
@@ -81,8 +86,11 @@ pub fn find(paths: &[String], excludes: &[String]) -> Result<Vec<Target>, String
         let meta =
             fs::metadata(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         if !meta.is_dir() {
+            // A file named outright has no walk root, so it stands as its own:
+            // its directory is the tree we were pointed at.
+            let root = path.parent().unwrap_or(Path::new("."));
             match kind_for(path) {
-                Some(kind) => add(path, kind),
+                Some(kind) => add(path, kind, root),
                 None => {
                     return Err(format!(
                         "{} is not an AGENTS.md or SKILL.md",
@@ -103,7 +111,7 @@ fn walk(
     root: &Path,
     dir: &Path,
     patterns: &[Pattern],
-    add: &mut impl FnMut(&Path, Kind),
+    add: &mut impl FnMut(&Path, Kind, &Path),
 ) -> Result<(), String> {
     let mut entries: Vec<_> = fs::read_dir(dir)
         .map_err(|e| format!("cannot read {}: {e}", dir.display()))?
@@ -135,7 +143,7 @@ fn walk(
         if !patterns.is_empty() && matches_any(patterns, &name, &rel()) {
             continue;
         }
-        add(&path, kind);
+        add(&path, kind, root);
     }
     Ok(())
 }

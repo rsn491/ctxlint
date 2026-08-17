@@ -3,7 +3,10 @@
 use std::io::Write;
 
 use crate::discover;
-use crate::lint::{self, Config};
+use crate::lint::{
+    self, Config, DEFAULT_MAX_AGENTS_TOKENS, DEFAULT_MAX_SKILL_DESCRIPTION_TOKENS,
+    DEFAULT_MAX_SKILL_NAME_TOKENS, DEFAULT_MAX_SKILL_TOKENS,
+};
 use crate::report;
 
 /// No errors were found; warnings alone still exit OK.
@@ -15,11 +18,6 @@ pub const EXIT_USAGE: i32 = 2;
 
 /// The reported build version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-const DEFAULT_MAX_AGENTS_TOKENS: i64 = 2500;
-const DEFAULT_MAX_SKILL_TOKENS: i64 = 5000;
-const DEFAULT_MAX_SKILL_NAME_TOKENS: i64 = 16;
-const DEFAULT_MAX_SKILL_DESCRIPTION_TOKENS: i64 = 100;
 
 struct Flags {
     max_agents_tokens: i64,
@@ -39,11 +37,14 @@ struct Flags {
 
 impl Default for Flags {
     fn default() -> Self {
+        // Budgets come from Config so the flag defaults, the usage text and
+        // the library default are one value each.
+        let cfg = Config::default();
         Flags {
-            max_agents_tokens: DEFAULT_MAX_AGENTS_TOKENS,
-            max_skill_tokens: DEFAULT_MAX_SKILL_TOKENS,
-            max_skill_name_tokens: DEFAULT_MAX_SKILL_NAME_TOKENS,
-            max_skill_description_tokens: DEFAULT_MAX_SKILL_DESCRIPTION_TOKENS,
+            max_agents_tokens: cfg.max_agents_tokens,
+            max_skill_tokens: cfg.max_skill_tokens,
+            max_skill_name_tokens: cfg.max_skill_name_tokens,
+            max_skill_description_tokens: cfg.max_skill_description_tokens,
             format: "text".to_string(),
             color: "auto".to_string(),
             strict: false,
@@ -298,7 +299,12 @@ pub fn run(
             resolve_color(&f.color, is_terminal),
         )
     };
-    if let Err(e) = write_result {
+    // A closed pipe is how `ctxlint . | head` ends, not a failure: report
+    // whatever the findings warrant and stay quiet, rather than exiting like a
+    // bad flag. Every other write failure is still worth reporting.
+    if let Err(e) = write_result
+        && e.kind() != std::io::ErrorKind::BrokenPipe
+    {
         let _ = writeln!(stderr, "ctxlint: {e}");
         return EXIT_USAGE;
     }
@@ -404,6 +410,48 @@ mod tests {
             String::from_utf8(out).unwrap(),
             String::from_utf8(err).unwrap(),
         )
+    }
+
+    /// Fails every write with a fixed `ErrorKind`, standing in for a closed
+    /// pipe without needing a real one.
+    struct FailingWriter(std::io::ErrorKind);
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::from(self.0))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::from(self.0))
+        }
+    }
+
+    fn run_into_failing_writer(kind: std::io::ErrorKind, path: &str) -> (i32, String) {
+        let args = vec![path.to_string()];
+        let mut err = Vec::new();
+        let code = run(&args, &mut FailingWriter(kind), &mut err, false);
+        (code, String::from_utf8(err).unwrap())
+    }
+
+    #[test]
+    fn broken_pipe_is_not_a_usage_error() {
+        use std::io::ErrorKind;
+
+        // Findings still set the exit code, and nothing is said about the pipe.
+        let (code, stderr) = run_into_failing_writer(ErrorKind::BrokenPipe, &fixture(&["broken"]));
+        assert_eq!(code, EXIT_FINDINGS, "stderr={stderr}");
+        assert!(stderr.is_empty(), "stderr={stderr}");
+
+        let (code, stderr) = run_into_failing_writer(ErrorKind::BrokenPipe, &fixture(&["clean"]));
+        assert_eq!(code, EXIT_OK, "stderr={stderr}");
+        assert!(stderr.is_empty(), "stderr={stderr}");
+
+        // Other write failures are still reported, so this did not widen into
+        // swallowing real I/O errors.
+        let (code, stderr) =
+            run_into_failing_writer(ErrorKind::PermissionDenied, &fixture(&["broken"]));
+        assert_eq!(code, EXIT_USAGE);
+        assert!(stderr.contains("ctxlint:"), "stderr={stderr}");
     }
 
     #[test]
