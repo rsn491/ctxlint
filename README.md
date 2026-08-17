@@ -76,6 +76,10 @@ Switch any of them off by id:
 ctxlint --disable name.dir-mismatch --disable frontmatter.unknown-key .
 ```
 
+Rules (along with token budgets and excludes) can also be set in a
+`.ctxlint.yaml` config file instead of passing flags every time — see
+[`.ctxlint.yaml`](.ctxlint.yaml) for an example.
+
 ## Running on CI
 
 ```yaml
