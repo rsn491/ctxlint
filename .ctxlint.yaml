@@ -1,7 +1,9 @@
-# ctxlint's settings for its own repository. Flags override anything set here.
-strict: true
-
+# ctxlint's own lint settings; also linked from the README as a sample.
 exclude:
   # Fixtures are broken on purpose.
   - testdata
   - tmp
+
+# Example: switch a rule off by id (see `ctxlint --list-rules`).
+# rules:
+#   name.dir-mismatch: false

@@ -23,19 +23,20 @@ const DEFAULT_MAX_SKILL_TOKENS: i64 = 5000;
 const DEFAULT_MAX_SKILL_NAME_TOKENS: i64 = 16;
 const DEFAULT_MAX_SKILL_DESCRIPTION_TOKENS: i64 = 100;
 
-/// What the command line asked for. Every setting a config file can also
-/// carry is optional here, so an unset flag is distinguishable from one set to
-/// its default value and the file can supply it instead.
-#[derive(Default)]
+/// What the command line asked for. The four token budgets are optional so an
+/// unset flag is distinguishable from one set to its default value and the
+/// config file can supply it instead. Run-behavior flags (`strict`, `quiet`,
+/// `format`, `color`) are not configurable via the file, so they keep their
+/// concrete defaults here.
 struct Flags {
     max_agents_tokens: Option<i64>,
     max_skill_tokens: Option<i64>,
     max_skill_name_tokens: Option<i64>,
     max_skill_description_tokens: Option<i64>,
-    format: Option<String>,
-    color: Option<String>,
-    strict: Option<bool>,
-    quiet: Option<bool>,
+    format: String,
+    color: String,
+    strict: bool,
+    quiet: bool,
     show_version: bool,
     list_rules: bool,
     excludes: Vec<String>,
@@ -45,8 +46,31 @@ struct Flags {
     paths: Vec<String>,
 }
 
-/// The settings a run actually uses, after the command line, the config file
-/// and the defaults have been merged in that order of precedence.
+impl Default for Flags {
+    fn default() -> Self {
+        Flags {
+            max_agents_tokens: None,
+            max_skill_tokens: None,
+            max_skill_name_tokens: None,
+            max_skill_description_tokens: None,
+            format: "text".to_string(),
+            color: "auto".to_string(),
+            strict: false,
+            quiet: false,
+            show_version: false,
+            list_rules: false,
+            excludes: Vec::new(),
+            disabled: Vec::new(),
+            config: None,
+            no_config: false,
+            paths: Vec::new(),
+        }
+    }
+}
+
+/// The settings a run actually uses, after the command line and the config
+/// file's budgets, excludes and rules have been merged in that order of
+/// precedence.
 struct Resolved {
     max_agents_tokens: i64,
     max_skill_tokens: i64,
@@ -64,7 +88,8 @@ struct Resolved {
 /// Merges flags over config-file settings over the built-in defaults. Lists
 /// accumulate instead of overriding: `--exclude` and `--disable` add to
 /// whatever the file already asked for, since narrowing a run further on the
-/// command line is the common case.
+/// command line is the common case. Run-behavior flags pass straight through:
+/// the config file has no say over them.
 fn resolve(f: Flags, cfg: config::Settings) -> Resolved {
     let mut excludes = cfg.excludes;
     excludes.extend(f.excludes);
@@ -88,13 +113,10 @@ fn resolve(f: Flags, cfg: config::Settings) -> Resolved {
             .max_skill_description_tokens
             .or(cfg.max_skill_description_tokens)
             .unwrap_or(DEFAULT_MAX_SKILL_DESCRIPTION_TOKENS),
-        format: f
-            .format
-            .or(cfg.format)
-            .unwrap_or_else(|| "text".to_string()),
-        color: f.color.or(cfg.color).unwrap_or_else(|| "auto".to_string()),
-        strict: f.strict.or(cfg.strict).unwrap_or(false),
-        quiet: f.quiet.or(cfg.quiet).unwrap_or(false),
+        format: f.format,
+        color: f.color,
+        strict: f.strict,
+        quiet: f.quiet,
         excludes,
         disabled,
         paths: if f.paths.is_empty() {
@@ -202,8 +224,8 @@ fn parse_args(args: &[String]) -> ParseOutcome {
             "h" | "help" => return ParseOutcome::Help,
             "version" => f.show_version = true,
             "list-rules" => f.list_rules = true,
-            "strict" => f.strict = Some(parse_bool_inline(inline)),
-            "quiet" => f.quiet = Some(parse_bool_inline(inline)),
+            "strict" => f.strict = parse_bool_inline(inline),
+            "quiet" => f.quiet = parse_bool_inline(inline),
             "no-config" => f.no_config = parse_bool_inline(inline),
             "max-agents-tokens" => {
                 let raw = next_value!("max-agents-tokens", inline);
@@ -222,8 +244,8 @@ fn parse_args(args: &[String]) -> ParseOutcome {
                 f.max_skill_description_tokens =
                     Some(parse_int!("max-skill-description-tokens", raw));
             }
-            "format" => f.format = Some(next_value!("format", inline)),
-            "color" => f.color = Some(next_value!("color", inline)),
+            "format" => f.format = next_value!("format", inline),
+            "color" => f.color = next_value!("color", inline),
             "config" => {
                 let v = next_value!("config", inline);
                 if v.is_empty() {
@@ -446,10 +468,9 @@ For skills, YAML front matter is validated against the skill spec. For both
 kinds, token budgets are enforced on the content, and on a skill's name and
 description.
 
-Settings can also live in a config file: the nearest .ctxlint.yaml (or
-.ctxlint.yml) at or above the working directory is read automatically. Its
-keys are the flag names below without the leading dashes, plus a rules mapping
-of rule id to true or false. Flags win over the file.
+Token budgets, excludes and rules can also live in a config file: the nearest
+.ctxlint.yaml (or .ctxlint.yml) at or above the working directory is read
+automatically. Flags win over the file.
 
   max-skill-tokens: 3000
   exclude:
@@ -795,10 +816,7 @@ mod tests {
     #[test]
     fn config_file_supplies_settings() {
         let dir = tempfile::tempdir().unwrap();
-        let cfg = write_config(
-            &dir,
-            "max-agents-tokens: 5\nmax-skill-tokens: 0\nquiet: true\n",
-        );
+        let cfg = write_config(&dir, "max-agents-tokens: 5\nmax-skill-tokens: 0\n");
 
         let (code, stdout, stderr) = run_raw(&["--config", &cfg, &fixture(&["clean"])]);
         assert_eq!(code, EXIT_FINDINGS, "stdout={stdout} stderr={stderr}");
@@ -827,30 +845,40 @@ mod tests {
     fn flags_win_over_the_config_file() {
         let dir = tempfile::tempdir().unwrap();
         let clean = fixture(&["clean"]);
-        let cfg = write_config(&dir, "max-agents-tokens: 5\nstrict: true\nformat: json\n");
+        let cfg = write_config(&dir, "max-agents-tokens: 5\n");
 
-        // The flag overrides the file's budget, so the tree comes back clean,
-        // and --format text overrides the file's json.
-        let (code, stdout, stderr) = run_raw(&[
-            "--config",
-            &cfg,
-            "--max-agents-tokens",
-            "0",
-            "--format",
-            "text",
-            &clean,
-        ]);
+        // The flag overrides the file's budget, so the tree comes back clean.
+        let (code, stdout, stderr) =
+            run_raw(&["--config", &cfg, "--max-agents-tokens", "0", &clean]);
         assert_eq!(code, EXIT_OK, "stdout={stdout} stderr={stderr}");
         assert!(stdout.contains("2 files checked"), "{stdout}");
+    }
 
-        // Booleans too: --strict=false undoes the file's strict.
+    #[test]
+    fn run_behavior_flags_are_not_configurable_via_the_file() {
+        let dir = tempfile::tempdir().unwrap();
         let skill = fixture(&["broken", "bad-name", "SKILL.md"]);
-        let cfg = write_config(&dir, "strict: true\nrules:\n  name.format: false\n");
-        let (code, stdout, _) = run_raw(&["--config", &cfg, &skill]);
-        assert_eq!(code, EXIT_FINDINGS, "{stdout}");
-        let (code, stdout, _) = run_raw(&["--config", &cfg, "--strict=false", &skill]);
-        assert_eq!(code, EXIT_OK, "{stdout}");
-        assert!(stdout.contains(lint::RULE_NAME_DIR_MISMATCH), "{stdout}");
+
+        // strict, quiet, format and color are not valid config keys.
+        for key in [
+            "strict: true",
+            "quiet: true",
+            "format: json",
+            "color: never",
+        ] {
+            let cfg = write_config(&dir, &format!("{key}\n"));
+            let (code, stdout, stderr) = run_raw(&["--config", &cfg, &skill]);
+            assert_eq!(code, EXIT_USAGE, "{key}: stdout={stdout} stderr={stderr}");
+            assert!(stderr.contains("unknown setting"), "{key}: {stderr}");
+        }
+
+        // Without them in the file, --strict on the command line still works
+        // as a run-behavior flag, unaffected by the config file's presence.
+        let cfg = write_config(&dir, "rules:\n  name.format: false\n");
+        let (code, ..) = run_raw(&["--config", &cfg, &skill]);
+        assert_eq!(code, EXIT_OK);
+        let (code, ..) = run_raw(&["--config", &cfg, "--strict", &skill]);
+        assert_eq!(code, EXIT_FINDINGS);
     }
 
     #[test]
